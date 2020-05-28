@@ -3,20 +3,37 @@ use strict;
 use warnings;
 use utf8;
 use Tk;
+use Scalar::Util;
+use Switch;
 
 package MainLogic; {
   use constant {
-    FALSE => 0,
-    TRUE  => 1
+    FALSE                   => 0,
+    TRUE                    => 1,
+    LEVEL_COMPLETION_POINTS => 1000
   };
 
   my $fieldSize = Size->new(900, 900);
-  my $asteroidAmount = 10;
+  my @asteroidAmounts = (
+    2,     3,     5,     7,    11,    13,    17,    19,    23,    29,    31,    37,    41,    43,
+    47,    53,    59,    61,    67,    71,    73,    79,    83,    89,    97,   101,   103,   107,
+    109,   113,   127,   131,   137,   139,   149,   151,   157,   163,   167,   173,   179,   181,
+    191,   193,   197,   199,   211,   223,   227,   229,   233,   239,   241,   251,   257,   263,
+    269,   271,   277,   281,   283,   293,   307,   311,   313,   317,   331,   337,   347,   349,
+    353,   359,   367,   373,   379,   383,   389,   397,   401,   409,   419,   421,   431,   433,
+    439,   443,   449,   457,   461,   463,   467,   479,   487,   491,   499,   503,   509,   521,
+    523,   541);
+  my $levelIndex = 1;
   my $isGamerOver = FALSE;
   my $player;
+  my $score = 0;
+  my $scoreId;
   my @bullets;
   my @asteroids;
-  my %keys;
+  my %keys = (
+    Move  => 'w',
+    Shoot => 'q'
+  );
 
   #tk elements
   my $mw = Tk::MainWindow->new();
@@ -25,33 +42,42 @@ package MainLogic; {
   Main();
 
   sub Main {
-    $player = Player->new(
-      Point->new($fieldSize->{Width} / 2,
-        $fieldSize->{Height} / 2),
-      Size->new(25, 25),
-      'darkblue',
-      __PACKAGE__,
-      $fieldSize);
-
-    %keys = (
-      Move  => 'w',
-      Shoot => 'q'
-    );
+    $canvas->createRectangle(0, 0, $fieldSize->{Width}, $fieldSize->{Height}, -fill => 'black');
+    CreatePlayer();
+    CreateScore();
+    CreateAsteroids();
 
     $mw->title("Spaceship");
-    $player->{Id} = CreateCanvasElement($player, $player->{Color});
-
-    for (my $i = 0; $i < $asteroidAmount; ++$i) {
-      my $asteroid = Asteroid->new($fieldSize, __PACKAGE__);
-
-      push(@asteroids, $asteroid);
-      $asteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
-    }
-
     $mw->bind('<Any-KeyPress>', \&KeyPressed);
     $mw->bind('<Any-KeyRelease>', \&KeyReleased);
     $mw->repeat(20, \&Update);
     $mw->MainLoop();
+  }
+
+  sub CreateScore {
+    $scoreId = $canvas->createText(60, 20, -text => "Level: $levelIndex | Score: $score", -fill => "white");
+  }
+
+  sub CreatePlayer {
+    $player = Player->new(
+      Point->new($fieldSize->{Width} / 2,
+        $fieldSize->{Height} / 2),
+      Size->new(25, 25),
+      'blue',
+      __PACKAGE__,
+      $fieldSize);
+
+    $player->{Id} = CreateCanvasElement($player, $player->{Color});
+  }
+
+  sub CreateAsteroids {
+    my $amount = @asteroidAmounts[$levelIndex - 1];
+    for (my $i = 0; $i < $amount; ++$i) {
+      my $asteroid = Asteroid->new($fieldSize, __PACKAGE__);
+
+      $asteroids[$i] = $asteroid;
+      $asteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
+    }
   }
 
   sub CreateCanvasElement {
@@ -71,49 +97,64 @@ package MainLogic; {
 
     $player->Update(GetCursorPosition());
 
-    foreach my $bullet (@bullets) {
+    for (my $i = scalar @bullets - 1; $i >= 0; --$i) {
+      my $bullet = $bullets[$i];
       $bullet->Update();
+
+      #delete bullet if not in field anymore
+      if ($bullet->{Position}->{X} > $fieldSize->{Width} or $bullet->{Position}->{Y} > $fieldSize->{Height}) {
+        $canvas->delete($bullet->{Id});
+        splice(@bullets, $i, 1);
+      }
     }
 
     foreach my $asteroid (@asteroids) {
       $asteroid->Update();
 
       if (Utils::IntersectsWith($player, $asteroid)) {
-        $canvas->createText(400, 450, -text=>"You Lost!");
+        $canvas->createText(400, 450, -text => "You Lost!", -fill => "white");
         $isGamerOver = TRUE;
       }
     }
 
-    CheckCollision();
+    HandleCollision();
+
+    my $count = scalar @asteroids;
+
+    if ($count == 0) {
+      $score += LEVEL_COMPLETION_POINTS;
+      ++$levelIndex;
+      CreateAsteroids();
+    }
+
     Draw();
   }
 
-  sub CheckCollision {
+  sub HandleCollision {
     my $asteroidCount = scalar @asteroids;
-    my $itemDeleted = FALSE;
 
-
-    for (my $i = 0; $i < $asteroidCount; ++$i) {
+    for (my $i = $asteroidCount - 1; $i >= 0; --$i) {
       my $bulletCount = scalar @bullets;
-      #print "count: $bulletCount \n";
+      my $asteroid = $asteroids[$i];
 
-      for (my $j = 0; $j < $bulletCount,; ++$j) {
-        if (Utils::Contains($asteroids[$i], $bullets[$j]->{Position})) {
-          $itemDeleted = TRUE;
+      for (my $j = $bulletCount - 1; $j >= 0; --$j) {
 
-          splice(@asteroids, $i, 1);
-          splice(@bullets, $j, 1);
-          $canvas->delete($asteroids[$i]->{Id});
+        if (Utils::Contains($asteroid, $bullets[$j]->{Position})) {
           $canvas->delete($bullets[$j]->{Id});
-          last;
+          splice(@bullets, $j, 1);
+
+          $score += $asteroid->{Size}->{Width};
+
+          if ($asteroid->{CanSplit}) {
+            my $newAsteroid =  $asteroid->Split();
+            $newAsteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
+            push (@asteroids, $newAsteroid);
+          } else {
+            $canvas->delete($asteroid->{Id});
+            splice(@asteroids, $i, 1);
+          }
         }
       }
-    }
-
-    if ($itemDeleted) {
-      my $c = scalar @bullets;
-      print "new count: $c \n";
-      exit;
     }
   }
 
@@ -124,6 +165,8 @@ package MainLogic; {
       DrawCanvasElement($asteroids[$i]);
     }
 
+    $canvas->delete($scoreId);
+    CreateScore();
     DrawCanvasElement($player);
     DrawBullets();
   }
@@ -254,7 +297,7 @@ package Player; {
       FieldSize => $fieldSize,
       Direction  => Point->Empty(),
       IsMoving   => FALSE,
-      SPEED      => 10,
+      Speed      => 10,
       IsShooting => FALSE,
       ShootCounter => 7, #should be done with timer
       SHOOT_COUNTER_MAX => 7,
@@ -341,7 +384,7 @@ package Bullet; {
     return bless {
       Position  => $position,
       Direction => $direction,
-      SPEED     => 8,
+      Speed     => 8,
       Id        => 0
     }, ref($class)||$class||__PACKAGE__;
   }
@@ -357,34 +400,104 @@ package Asteroid; {
     FALSE  => 0,
     TRUE   => 1,
 
-    Small  => 20,
+    Small  => 30,
     Medium => 50,
-    Big    => 70
+    Big    => 90,
+
+    Slow   => 2,
+    Normal => 4,
+    Fast   => 7
   };
 
   sub new {
     my ($class, $fieldSize, $logic) = @_;
-
-    my $x = int(rand($fieldSize->{Width}));
-    my $y = int(rand($fieldSize->{Height}));
-
     my $direction = Point->new(rand(2) -1, rand(2) -1);
 
     return bless {
-      Position  => Point->new($x, $y),
+      Position  => _CalculatePosition($fieldSize),
       Size      => Size->new(Big, Big),
+      CanSplit => TRUE,
       Direction => $direction,
       _logic    => $logic,
       FieldSize => $fieldSize,
-      SPEED     => 3,
+      Speed     => Slow,
       Id        => 0
     }, ref($class)||$class||__PACKAGE__;
+  }
+
+  sub _new {
+    my ($class, $position, $size, $canSplit, $direction, $logic, $fieldSize, $speed) = @_;
+    return bless {
+      Position  => $position,
+      Size      => $size,
+      CanSplit  => $canSplit,
+      Direction => $direction,
+      _logic    => $logic,
+      FieldSize => $fieldSize,
+      Speed     => $speed,
+      Id        => 0
+    }, ref($class)||$class||__PACKAGE__;
+  }
+
+  sub _CalculatePosition {
+    my ($fieldSize) = @_;
+    my $case = int(rand(4));
+    my $x = int(rand($fieldSize->{Width}));
+    my $y = int(rand($fieldSize->{Height}));
+
+    switch($case) {
+      case 0 {
+        $x = 0;
+        $y = int(rand($fieldSize->{Height}));
+      }
+      case 1 {
+        $x = $fieldSize->{Width};
+        $y = int(rand($fieldSize->{Height}));
+      }
+      case 2 {
+        $x = int(rand($fieldSize->{Width}));
+        $y = 0;
+      }
+      case 3 {
+        $x = int(rand($fieldSize->{Width}));
+        $y = $fieldSize->{Height};
+      }
+    }
+
+    return Point->new($x, $y);
   }
 
   sub Update {
     my ($this) = @_;
     Utils::MoveModulo($this);
   }
+
+  sub Split {
+    my ($this) = @_;
+    my $newDirection = Point->new(-$this->{Direction}->{Y}, $this->{Direction}->{X});
+    my $size;
+    my $canSplit;
+    my $speed;
+
+    if ($this->{Size}->{Width} == Big) {
+      $size = Size->new(Medium, Medium);
+      $speed = Normal;
+      $canSplit = TRUE;
+    }
+
+    if ($this->{Size}->{Width} == Medium) {
+      $size = Size->new(Small, Small);
+      $speed = Fast;
+      $canSplit = FALSE;
+    }
+
+    $this->{Size} = $size;
+    $this->{CanSplit} = $canSplit;
+    $this->{Direction} = Point->new($this->{Direction}->{Y}, -$this->{Direction}->{X});
+    $this->{Speed} = $speed;
+    return Asteroid->_new($this->{Position}, $size, $canSplit, $newDirection, $this->{_logic}, $this->{FieldSize}, $speed);
+  }
+
 };
 
 package Utils; {
@@ -397,7 +510,7 @@ package Utils; {
   #moves game object by its direction and speed
   sub Move {
     my ($object) = @_;
-    my $amount = $object->{Direction}->Multiply($object->{SPEED});
+    my $amount = $object->{Direction}->Multiply($object->{Speed});
     $object->{Position} = $object->{Position}->Add($amount);
   }
 
