@@ -3,7 +3,10 @@ use strict;
 use warnings;
 use utf8;
 use Tk;
+use Tk::PNG;
+use Tk::JPEG;
 use Scalar::Util;
+use Math::Trig;
 use Switch;
 
 package MainLogic; {
@@ -14,6 +17,8 @@ package MainLogic; {
   };
 
   my $fieldSize = Size->new(900, 900);
+
+  #asteroid amounts perl level
   my @asteroidAmounts = (
     2,     3,     5,     7,    11,    13,    17,    19,    23,    29,    31,    37,    41,    43,
     47,    53,    59,    61,    67,    71,    73,    79,    83,    89,    97,   101,   103,   107,
@@ -42,44 +47,48 @@ package MainLogic; {
   Main();
 
   sub Main {
-    $canvas->createRectangle(0, 0, $fieldSize->{Width}, $fieldSize->{Height}, -fill => 'black');
+    #create background
+    my $image = $mw->Photo(-format => 'png', -file => 'D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/stars.png');
+    $canvas->createImage(0, 0, -image=>$image, anchor => 'nw');
+
     CreatePlayer();
     CreateScore();
     CreateAsteroids();
+    SetupWindow();
 
-    $mw->title("Spaceship");
-    $mw->bind('<Any-KeyPress>', \&KeyPressed);
-    $mw->bind('<Any-KeyRelease>', \&KeyReleased);
-    $mw->repeat(20, \&Update);
     $mw->MainLoop();
   }
 
-  sub CreateScore {
-    $scoreId = $canvas->createText(60, 20, -text => "Level: $levelIndex | Score: $score", -fill => "white");
-  }
-
+  #creates the player and his canvas element
   sub CreatePlayer {
-    $player = Player->new(
+    $player = GameElement::Player->new(
       Point->new($fieldSize->{Width} / 2,
         $fieldSize->{Height} / 2),
       Size->new(25, 25),
-      'blue',
+      'yellow',
       __PACKAGE__,
       $fieldSize);
 
     $player->{Id} = CreateCanvasElement($player, $player->{Color});
   }
 
+  #creates the score text
+  sub CreateScore {
+    $scoreId = $canvas->createText(60, 20, -text => "Level: $levelIndex | Score: $score", -fill => "white");
+  }
+
+  #creates the asteroids for the level and their canvas elements
   sub CreateAsteroids {
-    my $amount = @asteroidAmounts[$levelIndex - 1];
+    my $amount = $asteroidAmounts[$levelIndex - 1];
     for (my $i = 0; $i < $amount; ++$i) {
-      my $asteroid = Asteroid->new($fieldSize, __PACKAGE__);
+      my $asteroid = GameElement::Asteroid->new($fieldSize, __PACKAGE__);
 
       $asteroids[$i] = $asteroid;
       $asteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
     }
   }
 
+  #creates a gameElement on the canvas
   sub CreateCanvasElement {
     my ($element, $color) = @_;
 
@@ -87,38 +96,99 @@ package MainLogic; {
     my $y = $element->{Position}->{Y};
     my $width = $element->{Size}->{Width};
     my $height = $element->{Size}->{Height};
+    my $filename = "D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/asteroid1.png";
     return $canvas->createOval($x, $y, $x + $width, $y + $height, -fill => $color);
+    #return $canvas->createImage($x, $y, -image=> $canvas->Photo(-file=>$filename));
+}
+
+  # sets up the tk window
+  sub SetupWindow {
+    $mw->title("Spaceship");
+    $mw->bind('<Any-KeyPress>', \&KeyPressed);
+    $mw->bind('<Any-KeyRelease>', \&KeyReleased);
+    $mw->repeat(20, \&Update);
   }
 
+  #updates the game and draws it
   sub Update {
-    if ($isGamerOver) {
-      return;
-    }
+    if ($isGamerOver) { return;}
 
     $player->Update(GetCursorPosition());
+    UpdateBullets();
+    UpdateAsteroids();
 
+    HandleAsteroidBulletCollision();
+    HandleLevelCompletion();
+
+    Draw();
+  }
+
+  #updates bullets and deletes them when out of field
+  sub UpdateBullets {
+    #updates
     for (my $i = scalar @bullets - 1; $i >= 0; --$i) {
       my $bullet = $bullets[$i];
       $bullet->Update();
 
-      #delete bullet if not in field anymore
+      #deletes out of field bullets
       if ($bullet->{Position}->{X} > $fieldSize->{Width} or $bullet->{Position}->{Y} > $fieldSize->{Height}) {
         $canvas->delete($bullet->{Id});
         splice(@bullets, $i, 1);
       }
     }
+  }
 
+  #updates asteroids and sets gameOver when collision with player
+  sub UpdateAsteroids {
     foreach my $asteroid (@asteroids) {
       $asteroid->Update();
 
-      if (Utils::IntersectsWith($player, $asteroid)) {
+      if ($player->IntersectsWith($asteroid)) {
         $canvas->createText(400, 450, -text => "You Lost!", -fill => "white");
         $isGamerOver = TRUE;
       }
     }
+  }
 
-    HandleCollision();
+  #handles collision for each asteroid and bullet
+  sub HandleAsteroidBulletCollision {
 
+    for (my $i = scalar @asteroids - 1; $i >= 0; --$i) {
+      my $asteroid = $asteroids[$i];
+
+      for (my $j = scalar @bullets- 1; $j >= 0; --$j) {
+        my $bullet = $bullets[$j];
+
+        if ($asteroid->Contains($bullet->{Position})) {
+
+          $canvas->delete($bullet->{Id});
+          splice(@bullets, $j, 1);
+
+          $score += $asteroid->{Size}->{Width};
+          SplitAsteroid($asteroid, $i, $bullet->{Direction});
+        }
+      }
+    }
+  }
+
+  #splits and/or deletes asteroid
+  sub SplitAsteroid {
+    my ($asteroid, $i, $bulletDirection) = @_;
+
+    if ($asteroid->{CanSplit}) {
+
+      my $newAsteroid =  $asteroid->Split($bulletDirection);
+      $newAsteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
+      push (@asteroids, $newAsteroid);
+    } else {
+
+      $canvas->delete($asteroid->{Id});
+      splice(@asteroids, $i, 1);
+    }
+  }
+
+  #updates the score and creates new asteroids when level completed
+  sub HandleLevelCompletion {
     my $count = scalar @asteroids;
 
     if ($count == 0) {
@@ -126,38 +196,9 @@ package MainLogic; {
       ++$levelIndex;
       CreateAsteroids();
     }
-
-    Draw();
   }
 
-  sub HandleCollision {
-    my $asteroidCount = scalar @asteroids;
-
-    for (my $i = $asteroidCount - 1; $i >= 0; --$i) {
-      my $bulletCount = scalar @bullets;
-      my $asteroid = $asteroids[$i];
-
-      for (my $j = $bulletCount - 1; $j >= 0; --$j) {
-
-        if (Utils::Contains($asteroid, $bullets[$j]->{Position})) {
-          $canvas->delete($bullets[$j]->{Id});
-          splice(@bullets, $j, 1);
-
-          $score += $asteroid->{Size}->{Width};
-
-          if ($asteroid->{CanSplit}) {
-            my $newAsteroid =  $asteroid->Split();
-            $newAsteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
-            push (@asteroids, $newAsteroid);
-          } else {
-            $canvas->delete($asteroid->{Id});
-            splice(@asteroids, $i, 1);
-          }
-        }
-      }
-    }
-  }
-
+  #draws all the elements of the canvas
   sub Draw() {
     my $count = scalar @asteroids;
 
@@ -171,31 +212,31 @@ package MainLogic; {
     DrawBullets();
   }
 
-
+  #handles key press
   sub KeyPressed {
     my $key = $_[0]->XEvent->K;
 
-    if ($key eq $keys{Move}) { #todo: use switch
+    if ($key eq $keys{Move}) {
       $player->StartMoving();
-    }
 
-    if ($key eq $keys{Shoot}) {
+    } elsif ($key eq $keys{Shoot}) {
       $player->StartShooting();
     }
   }
 
+  #handles key release
   sub KeyReleased {
-    my $key = $_[0]->XEvent->K;#todo: use switch
+    my $key = $_[0]->XEvent->K;
 
     if ($key eq $keys{Move}) {
       $player->StopMoving();
-    }
 
-    if ($key eq $keys{Shoot}) {
+    } elsif ($key eq $keys{Shoot}) {
       $player->StopShooting();
     }
   }
 
+  #adds a bullet to array and canvas
   sub AddBullet {
     my ($this, $bullet) = @_;
 
@@ -207,15 +248,18 @@ package MainLogic; {
     $bullet->{Id} = $canvas->createOval($x, $y, $x + 10, $y + 10, -fill => 'red');
   }
 
+  #draws a gameElement on the canvas
   sub DrawCanvasElement {
     my ($element) = @_;
     my $x = $element->{Position}->{X};
     my $y = $element->{Position}->{Y};
     my $width = $element->{Size}->{Width};
     my $height = $element->{Size}->{Height};
+    #$canvas->coords($element->{Id}, $x, $y);
     $canvas->coords($element->{Id}, $x, $y, $x + $width, $y + $height);
   }
 
+  #draws all bullets on the canvas
   sub DrawBullets {
     my $count = scalar @bullets;
     for (my $i=0; $i < $count; ++$i) {
@@ -227,6 +271,7 @@ package MainLogic; {
     }
   }
 
+  #gets the current cursor position relative to the canvas
   sub GetCursorPosition {
     my $x = $canvas->pointerx - $canvas->rootx;
     my $y = $canvas->pointery - $canvas->rooty;
@@ -238,6 +283,7 @@ package MainLogic; {
 
 package Point; {
 
+  #creates a new point
   sub new {
     my ($class, $x, $y) = @_;
     return bless {
@@ -246,6 +292,7 @@ package Point; {
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  # creates a point with the coords (0, 0)
   sub Empty {
     my ($class) = @_;
     return bless {
@@ -254,24 +301,35 @@ package Point; {
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  #adds the values of a point onto this one
   sub Add {
     my ($this, $point) = @_;
     return(Point->new($this->{X} + $point->{X}, $this->{Y} + $point->{Y}))
   }
 
+  # substract the values of a point from this one
   sub Substract {
     my ($this, $point) = @_;
     return(Point->new($this->{X} - $point->{X}, $this->{Y} - $point->{Y}))
   }
 
+  # multiply the point with a value
   sub Multiply {
     my ($this, $value) = @_;
     return(Point->new($this->{X} * $value, $this->{Y} * $value))
   }
 
+  #divides the point with a value
+  sub Divide {
+    my ($this, $value) = @_;
+    return(Point->new($this->{X} / $value, $this->{Y} / $value))
+  }
+
 };
 
 package Size; {
+
+  #creates a new size
   sub new {
     my ($class, $width, $height) = @_;
     return bless {
@@ -281,12 +339,83 @@ package Size; {
   }
 };
 
-package Player; {
+package GameElement; {
   use constant {
     FALSE => 0,
     TRUE  => 1
   };
 
+  #needs position field
+  #needs size field
+  #needs direction field
+  #needs speed field
+
+  #moves this by its direction and speed
+  sub Move {
+    my ($object) = @_;
+    my $amount = $object->{Direction}->Multiply($object->{Speed});
+    $object->{Position} = $object->{Position}->Add($amount);
+  }
+
+  #moves this and keeps it in field
+  sub MoveModulo {
+    my ($object) = @_;
+    Move($object);
+    my $position = $object->{Position};
+    my $fieldSize = $object->{FieldSize};
+    $object->{Position} = Point->new($position->{X} % $fieldSize->{Width}, $position->{Y} % $fieldSize->{Height});
+  }
+
+  #checks if of this contain a specific point
+  sub Contains {
+    my ($object, $point)   = @_;
+    my $objPos = $object->{Position};
+    my $objX = $objPos->{X};
+    my $objY = $objPos->{Y};
+    my $pX = $point->{X};
+    my $pY = $point->{Y};
+    my $size = $object->{Size};
+
+    if ($pX >= $objX and
+      $pX <= $objX + $size->{Width} and
+      $pY >= $objY and
+      $pY <= $objY + $size->{Height}) {
+      return TRUE;
+    }
+    return FALSE;
+  }
+
+  #checks if this intersects with another gameElement
+  sub IntersectsWith {
+    my ($object, $otherObj) = @_;
+    my $l1 = $object->{Position};
+    my $r1 = Point->new($l1->{X} + $object->{Size}->{Width}, $l1->{Y} + $object->{Size}->{Height});
+    my $l2 = $otherObj->{Position};
+    my $r2 = Point->new($l2->{X} + $otherObj->{Size}->{Width}, $l2->{Y} + $otherObj->{Size}->{Height});
+
+    #If one rectangle is on left side of other
+    if ($l1->{X} >= $r2->{X} or $l2->{X} >= $r1->{X}) {
+      return FALSE;
+    }
+
+    #If one rectangle is above other
+    if ($l1->{Y} >= $r2->{Y} or $l2->{Y} >= $r1->{Y}) {
+      return FALSE;
+    }
+
+    return TRUE;
+  }
+}
+
+package GameElement::Player; {
+  use parent -norequire, 'GameElement';
+
+  use constant {
+    FALSE => 0,
+    TRUE  => 1
+  };
+
+  #creates a new player
   sub new {
     my ($class, $position, $size, $color, $mainLogic, $fieldSize) = @_;
     return bless {
@@ -295,68 +424,107 @@ package Player; {
       Color      => $color,
       _logic     => $mainLogic,
       FieldSize => $fieldSize,
-      Direction  => Point->Empty(),
+      Direction  => Point->Empty(), #the direction in which the ship is flying
+      DirectionLooking => Point->Empty(), #the direction in which the ship is looking
       IsMoving   => FALSE,
-      Speed      => 10,
+      Speed      => 0,
+      _MAX_SPEED => 10,
+      _ACCELERATION => 0.6,
+      _RESISTANCE => 0.2,
       IsShooting => FALSE,
       ShootCounter => 7, #should be done with timer
-      SHOOT_COUNTER_MAX => 7,
+      SHOT_COOLDOWN => 7,
       Id => 0
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  #sets the moving flag true
   sub StartMoving {
     my ($this) = @_;
     $this->{IsMoving} = TRUE;
   }
 
+  #sets the moving flag false
   sub StopMoving {
     my ($this) = @_;
     $this->{IsMoving} = FALSE;
 
   }
 
+  #updates the players direction, position and shots
   sub Update {
     my ($this, $cursorPos) = @_;
 
     $this->_ChangeDirection($cursorPos);
 
-    if ($this->{IsMoving}) {
-      Utils::MoveModulo($this);
-    }
+    $this->Move();
 
     $this->_Shoot();
   }
 
+  #moves the player
+  sub Move {
+    my ($this) = @_;
+    my $speed = $this->{Speed};
+    my $MAX_SPEED = $this->{_MAX_SPEED};
+
+    if ($this->{IsMoving}) {
+      #accelerate player if not at max speed
+      if ($speed <= $MAX_SPEED) {
+        $speed += $this->{_ACCELERATION};
+
+        if ($speed > $MAX_SPEED) {
+          $speed = $MAX_SPEED;
+        }
+
+        $this->{Speed} = $speed;
+      }
+
+    }
+    else {
+      if ($speed > 0) {
+        #slow player down if not still
+        $speed -= $this->{_RESISTANCE};
+
+        if ($speed < 0) {
+          $speed = 0;
+        }
+
+        $this->{Speed} = $speed;
+      }
+    }
+
+    $this->MoveModulo($this);
+  }
+
+  #changes the player direction to the cursorPos
   sub _ChangeDirection {
     my ($this, $cursorPos) = @_;
     my $playerPos = $this->{Position};
     my $vector = $cursorPos->Substract($playerPos); #todo: implement in direction property
-    my $bigger;
-    my $x = abs($vector->{X});
-    my $y = abs($vector->{Y});
+    my $length = sqrt(($vector->{X} * $vector->{X}) + ($vector->{Y} * $vector->{Y}));
+    $vector = $vector->Divide($length);
+    $this->{DirectionLooking} = $vector;
 
-    if ($x > $y) {
-      $bigger = $x;
-    } else {
-      $bigger = $y;
+    if ($this->{IsMoving}) {
+      $this->{Direction} = $vector;
     }
-
-    $vector = Point->new(($vector->{X}/$bigger), ($vector->{Y}/$bigger));
-    $this->{Direction} = $vector;
   }
 
+  #sets the shooting flag true
   sub StartShooting {
     my ($this) = @_;
     $this->{IsShooting} = TRUE;
   }
 
+  #sets shooting flag false and resets shooting cooldown
   sub StopShooting {
     my ($this) = @_;
     $this->{IsShooting} = FALSE;
-    $this->{ShootCounter} =$this->{SHOOT_COUNTER_MAX};
+    $this->{ShootCounter} =$this->{SHOT_COOLDOWN};
   }
 
+  #shoots when possible
   sub _Shoot {
     my ($this) = @_;
     if ($this->{IsShooting} == FALSE) {return;}
@@ -364,21 +532,21 @@ package Player; {
     #only shoot every X time
     my $counter = $this->{ShootCounter};
 
-    if ($counter < $this->{SHOOT_COUNTER_MAX}) {
+    if ($counter < $this->{SHOT_COOLDOWN}) {
       $this->{ShootCounter} = $counter + 1;
       return;
     }
 
     $this->{ShootCounter} = 0;
-
-
-    $this->{_logic}->AddBullet(Bullet->new($this->{Position}, $this->{Direction}));
+    $this->{_logic}->AddBullet(GameElement::Bullet->new($this->{Position}, $this->{DirectionLooking}));
   }
 
 };
 
-package Bullet; {
+package GameElement::Bullet; {
+  use parent -norequire, 'GameElement';
 
+  #creates new bullet
   sub new {
     my ($class, $position, $direction) = @_;
     return bless {
@@ -389,29 +557,35 @@ package Bullet; {
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  #updates bullet position
   sub Update {
     my ($this) = @_;
-    Utils::Move($this);
+    $this->Move($this);
   }
 };
 
-package Asteroid; {
+package GameElement::Asteroid; {
+  use parent -norequire, 'GameElement';
+
   use constant {
     FALSE  => 0,
     TRUE   => 1,
 
+    #asteroid sizes
     Small  => 30,
     Medium => 50,
     Big    => 90,
 
+    #asteroid speeds
     Slow   => 2,
     Normal => 4,
     Fast   => 7
   };
 
+  #creates a big asteroid
   sub new {
     my ($class, $fieldSize, $logic) = @_;
-    my $direction = Point->new(rand(2) -1, rand(2) -1);
+    my $direction = $class->_GetRandomDirection();
 
     return bless {
       Position  => _CalculatePosition($fieldSize),
@@ -425,6 +599,7 @@ package Asteroid; {
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  #creates a smaller asteroid after split
   sub _new {
     my ($class, $position, $size, $canSplit, $direction, $logic, $fieldSize, $speed) = @_;
     return bless {
@@ -439,6 +614,19 @@ package Asteroid; {
     }, ref($class)||$class||__PACKAGE__;
   }
 
+  #returns a random direction
+  sub _GetRandomDirection {
+    my $x = rand(2) -1;
+    my $y = sqrt(1 - ($x * $x));
+
+    if (rand(2) -1 < 0) {
+      $y = -$y;
+    }
+
+    return Point->new($x, $y);
+  }
+
+  #randomizes asteroid position somewhere at the fieldBorder
   sub _CalculatePosition {
     my ($fieldSize) = @_;
     my $case = int(rand(4));
@@ -467,25 +655,28 @@ package Asteroid; {
     return Point->new($x, $y);
   }
 
+  #moves asteroid
   sub Update {
     my ($this) = @_;
-    Utils::MoveModulo($this);
+    $this->MoveModulo($this);
   }
 
+  #splits asteroid into 2 smaller ones
+  #returns: smaller asteroid
   sub Split {
-    my ($this) = @_;
-    my $newDirection = Point->new(-$this->{Direction}->{Y}, $this->{Direction}->{X});
+    my ($this, $bulletDirection) = @_;
     my $size;
     my $canSplit;
     my $speed;
 
+    #medium one
     if ($this->{Size}->{Width} == Big) {
       $size = Size->new(Medium, Medium);
       $speed = Normal;
       $canSplit = TRUE;
-    }
 
-    if ($this->{Size}->{Width} == Medium) {
+      #small one
+    } else {
       $size = Size->new(Small, Small);
       $speed = Fast;
       $canSplit = FALSE;
@@ -493,72 +684,19 @@ package Asteroid; {
 
     $this->{Size} = $size;
     $this->{CanSplit} = $canSplit;
-    $this->{Direction} = Point->new($this->{Direction}->{Y}, -$this->{Direction}->{X});
+    $this->{Direction} = _GenerateSplitDirection($bulletDirection);
     $this->{Speed} = $speed;
-    return Asteroid->_new($this->{Position}, $size, $canSplit, $newDirection, $this->{_logic}, $this->{FieldSize}, $speed);
+    return GameElement::Asteroid->_new($this->{Position}, $size, $canSplit, _GenerateSplitDirection($bulletDirection), $this->{_logic}, $this->{FieldSize}, $speed);
+  }
+
+  sub _GenerateSplitDirection() {
+    my ($bulletDirection) = @_;
+    my $pi = Math::Trig::pi();
+
+    #bullet direction - 90° - random between 0-180°
+    my $angle = atan2($bulletDirection->{Y}, -$bulletDirection->{X}) - rand($pi);
+
+    return Point->new(sin($angle), cos($angle));
   }
 
 };
-
-package Utils; {
-
-  use constant {
-    FALSE => 0,
-    TRUE  => 1
-  };
-
-  #moves game object by its direction and speed
-  sub Move {
-    my ($object) = @_;
-    my $amount = $object->{Direction}->Multiply($object->{Speed});
-    $object->{Position} = $object->{Position}->Add($amount);
-  }
-
-  sub MoveModulo {
-    my ($object) = @_;
-    Move($object);
-    my $position = $object->{Position};
-    my $fieldSize = $object->{FieldSize};
-    $object->{Position} = Point->new($position->{X} % $fieldSize->{Width}, $position->{Y} % $fieldSize->{Height});
-  }
-
-  #checks if the bounds of a game object contain a specific point
-  sub Contains {
-    my ($object, $point)   = @_;
-    my $objPos = $object->{Position};
-    my $objX = $objPos->{X};
-    my $objY = $objPos->{Y};
-    my $pX = $point->{X};
-    my $pY = $point->{Y};
-    my $size = $object->{Size};
-
-    if ($pX >= $objX and
-      $pX <= $objX + $size->{Width} and
-      $pY >= $objY and
-      $pY <= $objY + $size->{Height}) {
-      return TRUE;
-    }
-    return FALSE;
-  }
-
-  sub IntersectsWith {
-    my ($object, $otherObj) = @_;
-    my $l1 = $object->{Position};
-    my $r1 = Point->new($l1->{X} + $object->{Size}->{Width}, $l1->{Y} + $object->{Size}->{Height});
-    my $l2 = $otherObj->{Position};
-    my $r2 = Point->new($l2->{X} + $otherObj->{Size}->{Width}, $l2->{Y} + $otherObj->{Size}->{Height});
-
-    #If one rectangle is on left side of other
-    if ($l1->{X} >= $r2->{X} or $l2->{X} >= $r1->{X}) {
-      return FALSE;
-    }
-
-    #If one rectangle is above other
-    if ($l1->{Y} >= $r2->{Y} or $l2->{Y} >= $r1->{Y}) {
-      return FALSE;
-    }
-
-    return TRUE;
-  }
-
-}
