@@ -10,6 +10,9 @@ use Math::Trig;
 use Switch;
 
 package MainLogic; {
+  use FindBin qw( $Bin );
+  use File::Spec;
+
   use constant {
     FALSE                   => 0,
     TRUE                    => 1,
@@ -48,7 +51,7 @@ package MainLogic; {
 
   sub Main {
     #create background
-    my $image = $mw->Photo(-format => 'png', -file => 'D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/stars.png');
+    my $image = $mw->Photo(-format => 'png', -file => File::Spec->catfile($Bin, 'stars.png'));
     $canvas->createImage(0, 0, -image=>$image, anchor => 'nw');
 
     CreatePlayer();
