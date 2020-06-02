@@ -8,7 +8,8 @@ use Tk::JPEG;
 use Scalar::Util;
 use Math::Trig;
 use Switch;
-
+# TODO: move uses where they belong
+# TODO: ressourcing (magic strings and numbers)
 package MainLogic; {
   use FindBin qw( $Bin );
   use File::Spec;
@@ -99,6 +100,7 @@ package MainLogic; {
     my $y = $element->{Position}->{Y};
     my $width = $element->{Size}->{Width};
     my $height = $element->{Size}->{Height};
+    # TODO: path
     my $filename = "D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/asteroid1.png";
     return $canvas->createOval($x, $y, $x + $width, $y + $height, -fill => $color);
     #return $canvas->createImage($x, $y, -image=> $canvas->Photo(-file=>$filename));
@@ -127,6 +129,7 @@ package MainLogic; {
   }
 
   #updates bullets and deletes them when out of field
+  # TODO: method makes things from different abstraction layers UI and BL
   sub UpdateBullets {
     #updates
     for (my $i = scalar @bullets - 1; $i >= 0; --$i) {
@@ -142,6 +145,7 @@ package MainLogic; {
   }
 
   #updates asteroids and sets gameOver when collision with player
+  # TODO: method makes things from different abstraction layers UI and BL
   sub UpdateAsteroids {
     foreach my $asteroid (@asteroids) {
       $asteroid->Update();
@@ -154,6 +158,7 @@ package MainLogic; {
   }
 
   #handles collision for each asteroid and bullet
+  # TODO: method makes things from different abstraction layers UI and BL
   sub HandleAsteroidBulletCollision {
 
     for (my $i = scalar @asteroids - 1; $i >= 0; --$i) {
@@ -175,6 +180,7 @@ package MainLogic; {
   }
 
   #splits and/or deletes asteroid
+  # TODO: method makes things from different abstraction layers UI and BL
   sub SplitAsteroid {
     my ($asteroid, $i, $bulletDirection) = @_;
 
