@@ -8,11 +8,10 @@ use Tk::JPEG;
 use Scalar::Util;
 use Math::Trig;
 use Switch;
+
 # TODO: move uses where they belong
 # TODO: ressourcing (magic strings and numbers)
 package MainLogic; {
-  use FindBin qw( $Bin );
-  use File::Spec;
 
   use constant {
     FALSE                   => 0,
@@ -36,7 +35,6 @@ package MainLogic; {
   my $isGamerOver = FALSE;
   my $player;
   my $score = 0;
-  my $scoreId;
   my @bullets;
   my @asteroids;
   my %keys = (
@@ -46,21 +44,25 @@ package MainLogic; {
 
   #tk elements
   my $mw = Tk::MainWindow->new();
-  my $canvas = $mw->Canvas(-width => $fieldSize->{Width}, -height => $fieldSize->{Height})->pack();
 
   Main();
 
   sub Main {
-    #create background
-    my $image = $mw->Photo(-format => 'png', -file => File::Spec->catfile($Bin, 'stars.png'));
-    $canvas->createImage(0, 0, -image=>$image, anchor => 'nw');
+    ImageManipulation::SetMw($mw);
+    UI::Initialize($mw, $fieldSize);
+    GameElement::Asteroid::Initialize();
+    UI::CreateBackground();
 
     CreatePlayer();
-    CreateScore();
+    UI::CreateScore($levelIndex, $score);
     CreateAsteroids();
     SetupWindow();
 
     $mw->MainLoop();
+  }
+
+  sub GetMW {
+    return $mw;
   }
 
   #creates the player and his canvas element
@@ -68,17 +70,12 @@ package MainLogic; {
     $player = GameElement::Player->new(
       Point->new($fieldSize->{Width} / 2,
         $fieldSize->{Height} / 2),
-      Size->new(25, 25),
+      Size->new(25, 35),
       'yellow',
       __PACKAGE__,
-      $fieldSize);
-
-    $player->{Id} = CreateCanvasElement($player, $player->{Color});
-  }
-
-  #creates the score text
-  sub CreateScore {
-    $scoreId = $canvas->createText(60, 20, -text => "Level: $levelIndex | Score: $score", -fill => "white");
+      $fieldSize,
+      $mw
+    );
   }
 
   #creates the asteroids for the level and their canvas elements
@@ -88,23 +85,8 @@ package MainLogic; {
       my $asteroid = GameElement::Asteroid->new($fieldSize, __PACKAGE__);
 
       $asteroids[$i] = $asteroid;
-      $asteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
     }
   }
-
-  #creates a gameElement on the canvas
-  sub CreateCanvasElement {
-    my ($element, $color) = @_;
-
-    my $x = $element->{Position}->{X};
-    my $y = $element->{Position}->{Y};
-    my $width = $element->{Size}->{Width};
-    my $height = $element->{Size}->{Height};
-    # TODO: path
-    my $filename = "D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/asteroid1.png";
-    return $canvas->createOval($x, $y, $x + $width, $y + $height, -fill => $color);
-    #return $canvas->createImage($x, $y, -image=> $canvas->Photo(-file=>$filename));
-}
 
   # sets up the tk window
   sub SetupWindow {
@@ -118,7 +100,7 @@ package MainLogic; {
   sub Update {
     if ($isGamerOver) { return;}
 
-    $player->Update(GetCursorPosition());
+    $player->Update(UI::GetCursorPosition());
     UpdateBullets();
     UpdateAsteroids();
 
@@ -138,7 +120,7 @@ package MainLogic; {
 
       #deletes out of field bullets
       if ($bullet->{Position}->{X} > $fieldSize->{Width} or $bullet->{Position}->{Y} > $fieldSize->{Height}) {
-        $canvas->delete($bullet->{Id});
+        UI::DeleteElement($bullet->{Id});
         splice(@bullets, $i, 1);
       }
     }
@@ -151,8 +133,8 @@ package MainLogic; {
       $asteroid->Update();
 
       if ($player->IntersectsWith($asteroid)) {
-        $canvas->createText(400, 450, -text => "You Lost!", -fill => "white");
         $isGamerOver = TRUE;
+        UI::CreateLoosingScreen();
       }
     }
   }
@@ -169,7 +151,7 @@ package MainLogic; {
 
         if ($asteroid->Contains($bullet->{Position})) {
 
-          $canvas->delete($bullet->{Id});
+          UI::DeleteElement($bullet->{Id});
           splice(@bullets, $j, 1);
 
           $score += $asteroid->{Size}->{Width};
@@ -187,11 +169,10 @@ package MainLogic; {
     if ($asteroid->{CanSplit}) {
 
       my $newAsteroid =  $asteroid->Split($bulletDirection);
-      $newAsteroid->{Id} = CreateCanvasElement($asteroid, 'grey');
       push (@asteroids, $newAsteroid);
     } else {
 
-      $canvas->delete($asteroid->{Id});
+      UI::DeleteElement($asteroid->{Id});
       splice(@asteroids, $i, 1);
     }
   }
@@ -212,13 +193,13 @@ package MainLogic; {
     my $count = scalar @asteroids;
 
     for (my $i = 0; $i < $count; ++$i) {
-      DrawCanvasElement($asteroids[$i]);
+      UI::DrawCanvasElement($asteroids[$i]);
     }
 
-    $canvas->delete($scoreId);
-    CreateScore();
-    DrawCanvasElement($player);
-    DrawBullets();
+    UI::DeleteScore();
+    UI::CreateScore($levelIndex, $score);
+    UI::DrawCanvasElement($player);
+    UI::DrawBullets(@bullets);
   }
 
   #handles key press
@@ -245,32 +226,66 @@ package MainLogic; {
     }
   }
 
-  #adds a bullet to array and canvas
+  #adds bullet to array
   sub AddBullet {
     my ($this, $bullet) = @_;
-
     push(@bullets, $bullet);
+  }
 
-    my $x = $bullet->{Position}->{X};
-    my $y = $bullet->{Position}->{Y};
+}
 
-    $bullet->{Id} = $canvas->createOval($x, $y, $x + 10, $y + 10, -fill => 'red');
+package UI; {
+  use File::Spec;
+  use FindBin qw( $Bin );
+
+  my $mw;
+  my $canvas;
+  my $scoreId;
+
+  sub Initialize {
+    my ($window, $fieldSize) = @_;
+    $mw = $window;
+    $canvas = $mw->Canvas(-width => $fieldSize->{Width}, -height => $fieldSize->{Height})->pack();
+  }
+
+  sub CreateBackground {
+    my $image = $mw->Photo(-file => File::Spec->catfile($Bin, 'stars.png'));
+    $canvas->createImage(0, 0, -image=>$image, anchor => 'nw');
+  }
+
+  sub DeleteElement {
+    my ($id) = @_;
+    $canvas->delete($id);
+  }
+
+  sub DeleteScore {
+    $canvas->delete($scoreId);
+  }
+
+  #creates the score text
+  sub CreateScore {
+    my ($levelIndex, $score) = @_;
+    $scoreId = $canvas->createText(60, 20, -text => "Level: $levelIndex | Score: $score", -fill => "white");
+  }
+
+  #creates a gameElement on the canvas
+  sub CreateCanvasElement {
+    my ($image, $position) = @_;
+    return $canvas->createImage($position->{X}, $position->{Y}, -image=> $image);
   }
 
   #draws a gameElement on the canvas
   sub DrawCanvasElement {
     my ($element) = @_;
-    my $x = $element->{Position}->{X};
-    my $y = $element->{Position}->{Y};
-    my $width = $element->{Size}->{Width};
-    my $height = $element->{Size}->{Height};
-    #$canvas->coords($element->{Id}, $x, $y);
-    $canvas->coords($element->{Id}, $x, $y, $x + $width, $y + $height);
+    my $position = $element->{Position};
+    $canvas->coords($element->{Id}, $position->{X}, $position->{Y});
   }
 
   #draws all bullets on the canvas
   sub DrawBullets {
+    my (@bullets) = @_;
     my $count = scalar @bullets;
+
     for (my $i=0; $i < $count; ++$i) {
       my $bullet = $bullets[$i];
       my $x = $bullet->{Position}->{X};
@@ -280,12 +295,34 @@ package MainLogic; {
     }
   }
 
+  sub CreateLoosingScreen {
+    #$canvas->delete("all");
+    #CreateBackground();
+
+    my $filename = 'D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/scoreboard.txt';
+    my $y = 450;
+
+    open(my $fh, '<', $filename) or die "Could not open file '$filename' $!";
+
+    while(<$fh>){
+      $canvas->createText(400, $y, -text => $_, -fill => "white");
+      $y+=20;
+    }
+
+    close($fh);
+  }
+
+  sub CreateBullet {
+      my ($position) = @_;
+      my $x = $position->{X};
+      my $y = $position->{Y};
+
+      return $canvas->createOval($x, $y, $x + 10, $y + 10, -fill => 'red');
+  }
+
   #gets the current cursor position relative to the canvas
   sub GetCursorPosition {
-    my $x = $canvas->pointerx - $canvas->rootx;
-    my $y = $canvas->pointery - $canvas->rooty;
-
-    return Point->new($x, $y);
+    return Point->new($canvas->pointerx - $canvas->rootx, $canvas->pointery - $canvas->rooty);
   }
 
 }
@@ -303,12 +340,17 @@ package Point; {
 
   # creates a point with the coords (0, 0)
   sub Empty {
-    my ($class) = @_;
-    return bless {
-      X => 0,
-      Y => 0
-    }, ref($class)||$class||__PACKAGE__;
+    return __PACKAGE__->new(0,0);
   }
+
+  sub X($;$){
+    my($this,$value)=@_;
+
+    $this->{X}=$value if scalar(@_>1);
+    return $this->{X};
+  }
+
+  sub Y($){my($this)=@_;return $this->{Y};}
 
   #adds the values of a point onto this one
   sub Add {
@@ -353,6 +395,8 @@ package GameElement; {
     FALSE => 0,
     TRUE  => 1
   };
+
+  #todo: need field for image but dunno how to realize
 
   #needs position field
   #needs size field
@@ -418,6 +462,7 @@ package GameElement; {
 
 package GameElement::Player; {
   use parent -norequire, 'GameElement';
+  use FindBin qw( $Bin );
 
   use constant {
     FALSE => 0,
@@ -427,23 +472,26 @@ package GameElement::Player; {
   #creates a new player
   sub new {
     my ($class, $position, $size, $color, $mainLogic, $fieldSize) = @_;
+    my $image = ImageManipulation::CreateImage(File::Spec->catfile($Bin, 'spaceship.png'), $size->{Width}, $size->{Height});
+    my $id = UI::CreateCanvasElement($image, $position);
     return bless {
-      Position   => $position,
-      Size       => $size,
-      Color      => $color,
-      _logic     => $mainLogic,
-      FieldSize => $fieldSize,
-      Direction  => Point->Empty(), #the direction in which the ship is flying
+      Position         => $position,
+      Size             => $size,
+      Color            => $color,
+      _logic           => $mainLogic,
+      FieldSize        => $fieldSize,
+      Direction        => Point->Empty(), #the direction in which the ship is flying
       DirectionLooking => Point->Empty(), #the direction in which the ship is looking
-      IsMoving   => FALSE,
-      Speed      => 0,
-      _MAX_SPEED => 10,
-      _ACCELERATION => 0.6,
-      _RESISTANCE => 0.2,
-      IsShooting => FALSE,
-      ShootCounter => 7, #should be done with timer
-      SHOT_COOLDOWN => 7,
-      Id => 0
+      IsMoving         => FALSE,
+      Speed            => 0,
+      _MAX_SPEED       => 8,
+      _ACCELERATION    => 0.6,
+      _RESISTANCE      => 0.2,
+      IsShooting       => FALSE,
+      ShootCounter     => 7, #should be done with timer
+      SHOT_COOLDOWN    => 6,
+      Id               => $id,
+      Image            => $image
     }, ref($class)||$class||__PACKAGE__;
   }
 
@@ -558,11 +606,14 @@ package GameElement::Bullet; {
   #creates new bullet
   sub new {
     my ($class, $position, $direction) = @_;
+
+    my $id = UI::CreateBullet($position);
+
     return bless {
       Position  => $position,
       Direction => $direction,
-      Speed     => 8,
-      Id        => 0
+      Speed     => 10,
+      Id        => $id
     }, ref($class)||$class||__PACKAGE__;
   }
 
@@ -575,6 +626,7 @@ package GameElement::Bullet; {
 
 package GameElement::Asteroid; {
   use parent -norequire, 'GameElement';
+  use FindBin qw( $Bin );
 
   use constant {
     FALSE  => 0,
@@ -583,7 +635,7 @@ package GameElement::Asteroid; {
     #asteroid sizes
     Small  => 30,
     Medium => 50,
-    Big    => 90,
+    Large    => 90,
 
     #asteroid speeds
     Slow   => 2,
@@ -591,26 +643,52 @@ package GameElement::Asteroid; {
     Fast   => 7
   };
 
-  #creates a big asteroid
+  my $imageSmall;
+  my $imageMedium;
+  my $imageLarge;
+
+  sub Initialize {
+    my $spritePath = File::Spec->catfile($Bin, 'asteroid1.png');
+    $imageSmall = ImageManipulation::CreateImage($spritePath, Small, Small);
+    $imageMedium = ImageManipulation::CreateImage($spritePath, Medium, Medium);
+    $imageLarge = ImageManipulation::CreateImage($spritePath, Large, Large);
+  }
+
+  #creates a large asteroid
   sub new {
     my ($class, $fieldSize, $logic) = @_;
     my $direction = $class->_GetRandomDirection();
+    my $image = $imageLarge;
+    my $position = _CalculatePosition($fieldSize);
+
+    my $id = UI::CreateCanvasElement($image, $position);
 
     return bless {
-      Position  => _CalculatePosition($fieldSize),
-      Size      => Size->new(Big, Big),
-      CanSplit => TRUE,
+      Position  => $position,
+      Size      => Size->new(Large, Large),
+      CanSplit  => TRUE,
       Direction => $direction,
       _logic    => $logic,
       FieldSize => $fieldSize,
       Speed     => Slow,
-      Id        => 0
+      Id        => $id,
+      Image     => $image
     }, ref($class)||$class||__PACKAGE__;
   }
 
   #creates a smaller asteroid after split
   sub _new {
     my ($class, $position, $size, $canSplit, $direction, $logic, $fieldSize, $speed) = @_;
+    my $image = $imageMedium;
+
+    if ($size->{Width} == Medium) {
+      $image = $imageMedium;
+    } else {
+      $image = $imageSmall;
+    }
+
+    my $id = UI::CreateCanvasElement($image, $position);
+
     return bless {
       Position  => $position,
       Size      => $size,
@@ -619,7 +697,8 @@ package GameElement::Asteroid; {
       _logic    => $logic,
       FieldSize => $fieldSize,
       Speed     => $speed,
-      Id        => 0
+      Id        => $id,
+      Image     => $image
     }, ref($class)||$class||__PACKAGE__;
   }
 
@@ -659,7 +738,7 @@ package GameElement::Asteroid; {
         $x = int(rand($fieldSize->{Width}));
         $y = $fieldSize->{Height};
       }
-    }
+    };
 
     return Point->new($x, $y);
   }
@@ -679,22 +758,27 @@ package GameElement::Asteroid; {
     my $speed;
 
     #medium one
-    if ($this->{Size}->{Width} == Big) {
+    if ($this->{Size}->{Width} == Large) {
       $size = Size->new(Medium, Medium);
       $speed = Normal;
       $canSplit = TRUE;
+      $this->{Image} = $imageMedium;
 
       #small one
     } else {
       $size = Size->new(Small, Small);
       $speed = Fast;
       $canSplit = FALSE;
+      $this->{Image} = $imageSmall;
     }
 
     $this->{Size} = $size;
     $this->{CanSplit} = $canSplit;
     $this->{Direction} = _GenerateSplitDirection($bulletDirection);
     $this->{Speed} = $speed;
+
+    UI::DeleteElement($this->{Id});
+    $this->{Id} = UI::CreateCanvasElement($this->{Image}, $this->{Position});
     return GameElement::Asteroid->_new($this->{Position}, $size, $canSplit, _GenerateSplitDirection($bulletDirection), $this->{_logic}, $this->{FieldSize}, $speed);
   }
 
@@ -708,4 +792,59 @@ package GameElement::Asteroid; {
     return Point->new(sin($angle), cos($angle));
   }
 
+
 };
+
+package ImageManipulation; {
+  use Tk;
+  use Tk::PNG;
+  use FindBin qw( $Bin );
+  my $mw;
+
+  #needed for accessing photo method
+  sub SetMw {
+    ($mw) = @_;
+  }
+
+  #creates an image, scaled to the given width and height
+  sub CreateImage {
+    my ($path, $width, $height) = @_;
+
+    my $image = $mw->Photo(-file => $path);
+    return ScaleImage($image, $width, $height);
+  }
+
+  #scales image into the target with the target bounds
+  sub ScaleImage {
+    my ($image, $width, $height) = @_;
+    my $target = CreateTempImage($width, $height);
+    my $factorX = $image->width / $width;
+    my $factorY = $image->height / $height;
+
+    for (my $y = 0; $y < $height ; ++$y) {
+      for (my $x = 0; $x < $width; ++$x) {
+            my $value = rgbToHex($image->get($x * $factorX, $y * $factorY));
+
+            #make transparent if black
+            if ($value eq '#000000') {
+              $image->transparencySet($x, $y, 1);
+            } else {
+          $target->put($value, -to => $x, $y);
+        }
+      }
+    }
+
+    return ($target);
+  }
+
+  #workaround to get a scaled image
+  sub CreateTempImage {
+    my ($width, $height) = @_;
+    return ($mw->Photo(-file => File::Spec->catfile($Bin, 'temp.png'), -width => $width, -height => $height));
+  }
+
+  sub rgbToHex {
+    my (@values) = @_;
+    return (sprintf ("#%2.2X%2.2X%2.2X",$values[0],$values[1],$values[2]));
+  }
+}
