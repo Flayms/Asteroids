@@ -12,6 +12,8 @@ use Switch;
 # TODO: move uses where they belong
 # TODO: ressourcing (magic strings and numbers)
 package MainLogic; {
+  use File::Spec;
+  use FindBin qw( $Bin );
 
   use constant {
     FALSE                   => 0,
@@ -33,7 +35,9 @@ package MainLogic; {
     523,   541);
   my $levelIndex = 1;
   my $isGamerOver = FALSE;
+  my $scoreBoardPath = File::Spec->catfile($Bin,'scoreboard.txt');
   my $player;
+  my $playerNameEntered = FALSE;
   my $score = 0;
   my @bullets;
   my @asteroids;
@@ -63,6 +67,10 @@ package MainLogic; {
 
   sub GetMW {
     return $mw;
+  }
+
+  sub GetScoreBoardPath {
+    return $scoreBoardPath;
   }
 
   #creates the player and his canvas element
@@ -98,7 +106,24 @@ package MainLogic; {
 
   #updates the game and draws it
   sub Update {
-    if ($isGamerOver) { return;}
+    if ($isGamerOver) {
+      if ($playerNameEntered) {
+        return;
+      }
+
+      my $playerName = UI::GetPlayerName();
+
+      #no empty strings or spaces allowed
+      if ($playerName eq "" || $playerName =~ /\s/) {
+        return;
+      }
+
+      print "playerName: $playerName \n";
+
+      $playerNameEntered = TRUE;
+      ShowScoreBoard();
+      return;
+    }
 
     $player->Update(UI::GetCursorPosition());
     UpdateBullets();
@@ -109,6 +134,33 @@ package MainLogic; {
 
     Draw();
   }
+
+  sub CreateScoreboardText {
+    my @lines = Utils::ReadAllLines($scoreBoardPath);
+    my $text;
+    my $scoreAdded = FALSE;
+    my $count = 10;
+    my $playerName = UI::GetPlayerName();
+
+    for (my $i = 0; $i < $count; ++$i) {
+      my $line = $lines[$i];
+      my @pair = split(" ", $line);
+
+      unless ($scoreAdded) {
+        #add player score
+        if ($score > $pair[1]) {
+          $text = $text . $playerName . " $score\n";
+          $count--;
+          $scoreAdded = TRUE;
+        }
+      }
+
+      $text = $text . "$line";
+    }
+
+    Utils::WriteText($scoreBoardPath, $text);
+  }
+
 
   #updates bullets and deletes them when out of field
   # TODO: method makes things from different abstraction layers UI and BL
@@ -133,10 +185,16 @@ package MainLogic; {
       $asteroid->Update();
 
       if ($player->IntersectsWith($asteroid)) {
+        UI::DisplayEntry();
         $isGamerOver = TRUE;
-        UI::CreateLoosingScreen();
+        return;
       }
     }
+  }
+
+  sub ShowScoreBoard {
+    CreateScoreboardText();
+    UI::CreateLoosingScreen();
   }
 
   #handles collision for each asteroid and bullet
@@ -241,6 +299,7 @@ package UI; {
   my $mw;
   my $canvas;
   my $scoreId;
+  my $playerName = "";
 
   sub Initialize {
     my ($window, $fieldSize) = @_;
@@ -274,6 +333,12 @@ package UI; {
     return $canvas->createImage($position->{X}, $position->{Y}, -image=> $image);
   }
 
+  sub ExchangeCanvasElement {
+    my ($id, $image, $position) = @_;
+    DeleteElement($id);
+    return CreateCanvasElement($image, $position);
+  }
+
   #draws a gameElement on the canvas
   sub DrawCanvasElement {
     my ($element) = @_;
@@ -295,21 +360,29 @@ package UI; {
     }
   }
 
+  sub DisplayEntry {
+    my $entry = $mw->Entry()->pack();
+    my $button = $mw->Button(
+      -text => 'enter',
+      -command => sub{
+        my $entryValue = $entry->get();
+        if ($entryValue eq "") { return }
+        $playerName = $entryValue;
+      },
+    )->pack();
+  }
+
+  sub GetPlayerName {
+    return $playerName;
+  }
+
   sub CreateLoosingScreen {
-    #$canvas->delete("all");
-    #CreateBackground();
+    my $filePath = MainLogic::GetScoreBoardPath();
+    my $caption = "----ScoreBoard----\n";
+    my $text = Utils::ReadText($filePath);
+    $text = $caption . $text;
 
-    my $filename = 'D:/SVN/HMP/Perl/trunk/Projects/AZUBI Playground/FIAE 2018/asteroids/scoreboard.txt';
-    my $y = 450;
-
-    open(my $fh, '<', $filename) or die "Could not open file '$filename' $!";
-
-    while(<$fh>){
-      $canvas->createText(400, $y, -text => $_, -fill => "white");
-      $y+=20;
-    }
-
-    close($fh);
+    $canvas->createText(400, 450, -text => $text, -font =>'big', -fill => "white");
   }
 
   sub CreateBullet {
@@ -390,6 +463,17 @@ package Size; {
   }
 };
 
+package Rectangle; {
+  #creates a new Rectangle
+  sub new {
+    my ($class, $location, $size) = @_;
+    return bless {
+      Location => $location,
+      Size => $size
+    }, ref($class)||$class||__PACKAGE__;
+  }
+}
+
 package GameElement; {
   use constant {
     FALSE => 0,
@@ -465,31 +549,36 @@ package GameElement::Player; {
   use FindBin qw( $Bin );
 
   use constant {
-    FALSE => 0,
-    TRUE  => 1
+    FALSE      => 0,
+    TRUE       => 1,
+
+    _MIN_SPEED     => 2,
+    _MAX_SPEED     => 8,
+    _ACCELERATION  => 0.6,
+    _RESISTANCE    => 0.1,
+    SHOT_COOLDOWN  => 6
   };
 
   #creates a new player
   sub new {
     my ($class, $position, $size, $color, $mainLogic, $fieldSize) = @_;
+
     my $image = ImageManipulation::CreateImage(File::Spec->catfile($Bin, 'spaceship.png'), $size->{Width}, $size->{Height});
     my $id = UI::CreateCanvasElement($image, $position);
+
     return bless {
       Position         => $position,
       Size             => $size,
       Color            => $color,
       _logic           => $mainLogic,
       FieldSize        => $fieldSize,
-      Direction        => Point->Empty(), #the direction in which the ship is flying
+      Direction        => Point->Empty(), #the direc tion in which the ship is flying
       DirectionLooking => Point->Empty(), #the direction in which the ship is looking
       IsMoving         => FALSE,
       Speed            => 0,
-      _MAX_SPEED       => 8,
-      _ACCELERATION    => 0.6,
-      _RESISTANCE      => 0.2,
+      MoveStopTime     => 0,
       IsShooting       => FALSE,
       ShootCounter     => 7, #should be done with timer
-      SHOT_COOLDOWN    => 6,
       Id               => $id,
       Image            => $image
     }, ref($class)||$class||__PACKAGE__;
@@ -505,7 +594,7 @@ package GameElement::Player; {
   sub StopMoving {
     my ($this) = @_;
     $this->{IsMoving} = FALSE;
-
+    $this->{MoveStopTime} = 3; #todo: remove magic number
   }
 
   #updates the players direction, position and shots
@@ -523,28 +612,32 @@ package GameElement::Player; {
   sub Move {
     my ($this) = @_;
     my $speed = $this->{Speed};
-    my $MAX_SPEED = $this->{_MAX_SPEED};
 
-    if ($this->{IsMoving}) {
-      #accelerate player if not at max speed
-      if ($speed <= $MAX_SPEED) {
-        $speed += $this->{_ACCELERATION};
+    #accelerate player if not at max speed
+     if ($this->{IsMoving}) {
 
-        if ($speed > $MAX_SPEED) {
-          $speed = $MAX_SPEED;
+      if ($speed <= _MAX_SPEED) {
+        if ($speed < _MIN_SPEED) {
+          $speed = _MIN_SPEED
+        } else {
+          $speed += _ACCELERATION;
+        }
+
+        if ($speed > _MAX_SPEED) {
+          $speed = _MAX_SPEED;
         }
 
         $this->{Speed} = $speed;
       }
-
     }
-    else {
-      if ($speed > 0) {
-        #slow player down if not still
-        $speed -= $this->{_RESISTANCE};
 
-        if ($speed < 0) {
-          $speed = 0;
+    #slow player down if not at min speed
+    else {
+      if ($speed > _MIN_SPEED) {
+        $speed -= _RESISTANCE;
+
+        if ($speed < _MIN_SPEED) {
+          $speed = _MIN_SPEED;
         }
 
         $this->{Speed} = $speed;
@@ -559,7 +652,9 @@ package GameElement::Player; {
     my ($this, $cursorPos) = @_;
     my $playerPos = $this->{Position};
     my $vector = $cursorPos->Substract($playerPos); #todo: implement in direction property
-    my $length = sqrt(($vector->{X} * $vector->{X}) + ($vector->{Y} * $vector->{Y}));
+    my $x = $vector->{X};
+    my $y = $vector->{Y};
+    my $length = sqrt(($x * $x) + ($y * $y));
     $vector = $vector->Divide($length);
     $this->{DirectionLooking} = $vector;
 
@@ -578,7 +673,7 @@ package GameElement::Player; {
   sub StopShooting {
     my ($this) = @_;
     $this->{IsShooting} = FALSE;
-    $this->{ShootCounter} =$this->{SHOT_COOLDOWN};
+    $this->{ShootCounter} =SHOT_COOLDOWN;
   }
 
   #shoots when possible
@@ -589,7 +684,7 @@ package GameElement::Player; {
     #only shoot every X time
     my $counter = $this->{ShootCounter};
 
-    if ($counter < $this->{SHOT_COOLDOWN}) {
+    if ($counter < SHOT_COOLDOWN) {
       $this->{ShootCounter} = $counter + 1;
       return;
     }
@@ -814,6 +909,15 @@ package ImageManipulation; {
     return ScaleImage($image, $width, $height);
   }
 
+  sub SetPixel {
+    my ($image, $x, $y, @color) = @_;
+    my $color = RgbToHex(@color);
+    #dont draw if black
+    unless ($color eq '#000000') {
+      $image->put($color, -to => $x, $y);
+    }
+  }
+
   #scales image into the target with the target bounds
   sub ScaleImage {
     my ($image, $width, $height) = @_;
@@ -821,20 +925,112 @@ package ImageManipulation; {
     my $factorX = $image->width / $width;
     my $factorY = $image->height / $height;
 
-    for (my $y = 0; $y < $height ; ++$y) {
+    for (my $y = 0; $y < $height; ++$y) {
       for (my $x = 0; $x < $width; ++$x) {
-            my $value = rgbToHex($image->get($x * $factorX, $y * $factorY));
-
-            #make transparent if black
-            if ($value eq '#000000') {
-              $image->transparencySet($x, $y, 1);
-            } else {
-          $target->put($value, -to => $x, $y);
-        }
+        SetPixel($target, $x, $y, $image->get($x * $factorX, $y * $factorY));
       }
     }
 
     return ($target);
+  }
+
+  sub RotateImage() {
+    my ($image, $angle) = @_;
+    my $width = $image->width;
+    my $height = $image->height;
+    my $center = Point->new($width / 2, $height / 2);
+    my $bounds = _CalculateBounds(Size->new($width, $height), $center, $angle);
+    my $target = CreateTempImage($bounds->{Size}->{Width}, $bounds->{Size}->{Height});
+    my $offset = $bounds->{Location};
+    $angle = (180 - $angle) * (Math::Trig::pi() / 180); #to radiant
+    my $sin = sin($angle);
+    my $cos = cos($angle);
+
+    for (my $y = 0; $y < $width * 2; ++$y) {
+      for (my $x = 0; $x < $height * 2; ++$x) {
+        my $ogPoint = _RotatePointSinCos(Point->new($x, $y), $center, $sin, $cos);
+        my $pX = $ogPoint->{X};
+        my $pY = $ogPoint->{Y};
+
+        if ($pX >= 0 && $pY >= 0 && $pX < $width && $pY < $height) {
+          my $posX = $x - $offset->{X};
+          my $posY = $y - $offset->{Y};
+          SetPixel($target, $posX, $posY, $image->get($pX, $pY));
+        }
+      }
+    }
+
+    return $target;
+  }
+
+  sub _CalculateBounds() {
+    my ($size, $center, $angle) = @_;
+    my @corners = (Point->Empty(),
+      Point->new($size->{Width}, 0),
+      Point->new($size->{Width}, $size->{Height}),
+      Point->new(0, $size->{Height}),
+    );
+    my $length = scalar @corners;
+    my @rotatedCorners;
+
+    #rotate the 4 corners
+    for (my $i = 0; $i < $length; ++$i) {
+      $rotatedCorners[$i] = RotatePoint($corners[$i], $center, $angle); #todo: convert angle beforehand
+    }
+
+    #find the smallest and biggest coordinates of the rotated corners
+    my $first = $rotatedCorners[0];
+    my $smallestX = $first->{X};
+    my $biggestX = $first->{X};
+    my $smallestY = $first->{Y};
+    my $biggestY = $first->{Y};
+
+    for (my $i = 1; $i < $length; ++$i) {
+      my $current = $rotatedCorners[$i];
+      my $cX = $current->{X};
+      my $cY = $current->{Y};
+
+      if ($cX < $smallestX) {
+        $smallestX = $cX;
+      }
+      if ($cX > $biggestX) {
+        $biggestX = $cX;
+      }
+      if ($cY < $smallestY) {
+        $smallestY = $cY;
+      }
+      if ($cY > $biggestY) {
+        $biggestY = $cY;
+      }
+    }
+
+    #return their rectangle
+    return (Rectangle->new(Point->new($smallestX, $smallestY), Size->new($biggestX - $smallestX, $biggestY - $smallestY)));
+  }
+
+  #takes degree angle
+  sub RotatePoint() {
+    my ($point, $center, $angle) = @_;
+    return (_RotatePoint($point, $center, $angle * (Math::Trig::pi() / 180)));
+  }
+
+  #takes radiant angle
+  sub _RotatePoint() {
+    my ($point, $center, $angle) = @_;
+    return (_RotatePointSinCos($point, $center, sin($angle), cos ($angle)));
+  }
+
+  #todo: should be overload of _RotatePoint
+  sub _RotatePointSinCos() {
+    my ($point, $center, $sin, $cos) = @_;
+
+    my $x = $point->{X} - $center->{X};
+    my $y = $point->{Y} - $center->{Y};
+
+    return (Point->new(
+      $cos * $x - $sin * $y + $center->{X},
+      $sin * $x - $cos * $y + $center->{Y}
+    ));
   }
 
   #workaround to get a scaled image
@@ -843,8 +1039,48 @@ package ImageManipulation; {
     return ($mw->Photo(-file => File::Spec->catfile($Bin, 'temp.png'), -width => $width, -height => $height));
   }
 
-  sub rgbToHex {
+  sub RgbToHex {
     my (@values) = @_;
     return (sprintf ("#%2.2X%2.2X%2.2X",$values[0],$values[1],$values[2]));
+  }
+}
+
+package Utils; {
+  sub ReadText {
+    my ($filePath) = @_;
+    my $text;
+
+    open(my $fh, '<', $filePath) or die $!;
+
+    while(<$fh>){
+      $text = $text . $_;
+    }
+
+    close($fh);
+
+    return $text;
+  }
+
+  sub ReadAllLines {
+    my ($filePath) = @_;
+    my @lines;
+    my $i = 0;
+
+    open(my $fh, '<', $filePath) or die $!;
+
+    while(<$fh>){
+      $lines[$i++] = $_;
+    }
+    close($fh);
+
+    return @lines;
+  }
+
+  sub WriteText {
+    my ($filePath, $text) = @_;
+
+    open(my $fh, '>', $filePath) or die $!;
+    print $fh $text;
+    close ($fh);
   }
 }
