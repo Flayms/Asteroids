@@ -1,16 +1,7 @@
 #!perl
 use strict;
 use warnings;
-use utf8;
-use Tk;
-use Tk::PNG;
-use Tk::JPEG;
-use Scalar::Util;
-use Math::Trig;
-use Switch;
 
-# TODO: move uses where they belong
-# TODO: ressourcing (magic strings and numbers)
 package MainLogic; {
   use File::Spec;
   use FindBin qw( $Bin );
@@ -18,10 +9,13 @@ package MainLogic; {
   use constant {
     FALSE                   => 0,
     TRUE                    => 1,
-    LEVEL_COMPLETION_POINTS => 1000
+    LEVEL_COMPLETION_POINTS => 1000,
+    _UPDATE_SPEED_MS        => 20,
+    SCOREBOARD_SCORE_AMOUNT => 10
   };
 
   my $fieldSize = Size->new(900, 900);
+  my $playerSize = Size->new(25, 35);
 
   #asteroid amounts perl level
   my @asteroidAmounts = (
@@ -33,6 +27,13 @@ package MainLogic; {
     353,   359,   367,   373,   379,   383,   389,   397,   401,   409,   419,   421,   431,   433,
     439,   443,   449,   457,   461,   463,   467,   479,   487,   491,   499,   503,   509,   521,
     523,   541);
+
+  my %keys = (
+    Move   => 'w',
+    Shoot  => 'q',
+    Shoot2 => 'space'
+  );
+
   my $levelIndex = 1;
   my $isGamerOver = FALSE;
   my $scoreBoardPath = File::Spec->catfile($Bin,'scoreboard.txt');
@@ -41,10 +42,6 @@ package MainLogic; {
   my $score = 0;
   my @bullets;
   my @asteroids;
-  my %keys = (
-    Move  => 'w',
-    Shoot => 'q'
-  );
 
   #tk elements
   my $mw = Tk::MainWindow->new();
@@ -55,14 +52,32 @@ package MainLogic; {
     ImageManipulation::SetMw($mw);
     UI::Initialize($mw, $fieldSize);
     GameElement::Asteroid::Initialize();
-    UI::CreateBackground();
 
-    CreatePlayer();
+
+    #CreateMenu();
+    StartGame();
+    $mw->MainLoop();
+  }
+
+  sub CreateMenu(){
+    $mw->Button(
+      -text    => "Start Game!",
+      -command => \&StartGame
+
+    )->pack();
+  }
+
+  sub StartGame() {
+
+
+    UI::CreateBackground();
+    $player = GameElement::Player->new(
+      Point->new($fieldSize->{Width} / 2, $fieldSize->{Height} / 2),
+      $playerSize, __PACKAGE__, $fieldSize, $mw
+    );
     UI::CreateScore($levelIndex, $score);
     CreateAsteroids();
     SetupWindow();
-
-    $mw->MainLoop();
   }
 
   sub GetMW {
@@ -71,19 +86,6 @@ package MainLogic; {
 
   sub GetScoreBoardPath {
     return $scoreBoardPath;
-  }
-
-  #creates the player and his canvas element
-  sub CreatePlayer {
-    $player = GameElement::Player->new(
-      Point->new($fieldSize->{Width} / 2,
-        $fieldSize->{Height} / 2),
-      Size->new(25, 35),
-      'yellow',
-      __PACKAGE__,
-      $fieldSize,
-      $mw
-    );
   }
 
   #creates the asteroids for the level and their canvas elements
@@ -101,7 +103,7 @@ package MainLogic; {
     $mw->title("Spaceship");
     $mw->bind('<Any-KeyPress>', \&KeyPressed);
     $mw->bind('<Any-KeyRelease>', \&KeyReleased);
-    $mw->repeat(20, \&Update);
+    $mw->repeat(_UPDATE_SPEED_MS, \&Update);
   }
 
   #updates the game and draws it
@@ -114,7 +116,7 @@ package MainLogic; {
       my $playerName = UI::GetPlayerName();
 
       #no empty strings or spaces allowed
-      if ($playerName eq "" || $playerName =~ /\s/) {
+      if (!(defined $playerName) || $playerName =~ /\s/) {
         return;
       }
 
@@ -139,7 +141,7 @@ package MainLogic; {
     my @lines = Utils::ReadAllLines($scoreBoardPath);
     my $text;
     my $scoreAdded = FALSE;
-    my $count = 10;
+    my $count = SCOREBOARD_SCORE_AMOUNT;
     my $playerName = UI::GetPlayerName();
 
     for (my $i = 0; $i < $count; ++$i) {
@@ -267,7 +269,7 @@ package MainLogic; {
     if ($key eq $keys{Move}) {
       $player->StartMoving();
 
-    } elsif ($key eq $keys{Shoot}) {
+    } elsif ($key eq $keys{Shoot} || $key eq $keys{Shoot2}) {
       $player->StartShooting();
     }
   }
@@ -279,7 +281,7 @@ package MainLogic; {
     if ($key eq $keys{Move}) {
       $player->StopMoving();
 
-    } elsif ($key eq $keys{Shoot}) {
+    } elsif ($key eq $keys{Shoot} || $key eq $keys{Shoot2}) {
       $player->StopShooting();
     }
   }
@@ -343,7 +345,9 @@ package UI; {
   sub DrawCanvasElement {
     my ($element) = @_;
     my $position = $element->{Position};
-    $canvas->coords($element->{Id}, $position->{X}, $position->{Y});
+    my $size = $element->{Size};
+    $canvas->coords($element->{Id}, $position->{X} + $size->{Width} / 2,
+      $position->{Y} + $size->{Height} / 2);
   }
 
   #draws all bullets on the canvas
@@ -480,8 +484,6 @@ package GameElement; {
     TRUE  => 1
   };
 
-  #todo: need field for image but dunno how to realize
-
   #needs position field
   #needs size field
   #needs direction field
@@ -489,34 +491,54 @@ package GameElement; {
 
   #moves this by its direction and speed
   sub Move {
-    my ($object) = @_;
-    my $amount = $object->{Direction}->Multiply($object->{Speed});
-    $object->{Position} = $object->{Position}->Add($amount);
+    my ($this) = @_;
+
+    my $amount = $this->{Direction}->Multiply($this->{Speed});
+    my $posX = $this->{Position}->{X};
+    my $posY = $this->{Position}->{Y};
+
+    $this->{Position} = $this->{Position}->Add($amount);
   }
 
   #moves this and keeps it in field
   sub MoveModulo {
-    my ($object) = @_;
-    Move($object);
-    my $position = $object->{Position};
-    my $fieldSize = $object->{FieldSize};
-    $object->{Position} = Point->new($position->{X} % $fieldSize->{Width}, $position->{Y} % $fieldSize->{Height});
+    my ($this) = @_;
+    Move($this);
+    my $position = $this->{Position};
+    my $size = $this->{Size};
+    my $cX = $position->{X} + ($size->{Width} / 2);
+    my $cY = $position->{Y} + ($size->{Height} / 2);
+    my $fieldSize = $this->{FieldSize};
+    my $fWidth = $fieldSize->{Width};
+    my $fHeight = $fieldSize->{Height};
+
+    if ($cX < 0) {
+      $position->{X} += $fWidth;
+    } elsif ($cX > $fWidth) {
+      $position->{X} -= $fWidth;
+    }
+
+    if ($cY < 0) {
+      $position->{Y} += $fHeight;
+    } elsif ($cY > $fHeight) {
+      $position->{Y} -= $fHeight;
+    }
   }
 
   #checks if of this contain a specific point
   sub Contains {
-    my ($object, $point)   = @_;
-    my $objPos = $object->{Position};
-    my $objX = $objPos->{X};
-    my $objY = $objPos->{Y};
+    my ($this, $point)   = @_;
+    my $Pos = $this->{Position};
+    my $x = $Pos->{X};
+    my $y = $Pos->{Y};
     my $pX = $point->{X};
     my $pY = $point->{Y};
-    my $size = $object->{Size};
+    my $size = $this->{Size};
 
-    if ($pX >= $objX and
-      $pX <= $objX + $size->{Width} and
-      $pY >= $objY and
-      $pY <= $objY + $size->{Height}) {
+    if ($pX >= $x and
+      $pX <= $x + $size->{Width} and
+      $pY >= $y and
+      $pY <= $y + $size->{Height}) {
       return TRUE;
     }
     return FALSE;
@@ -524,9 +546,9 @@ package GameElement; {
 
   #checks if this intersects with another gameElement
   sub IntersectsWith {
-    my ($object, $otherObj) = @_;
-    my $l1 = $object->{Position};
-    my $r1 = Point->new($l1->{X} + $object->{Size}->{Width}, $l1->{Y} + $object->{Size}->{Height});
+    my ($this, $otherObj) = @_;
+    my $l1 = $this->{Position};
+    my $r1 = Point->new($l1->{X} + $this->{Size}->{Width}, $l1->{Y} + $this->{Size}->{Height});
     my $l2 = $otherObj->{Position};
     my $r2 = Point->new($l2->{X} + $otherObj->{Size}->{Width}, $l2->{Y} + $otherObj->{Size}->{Height});
 
@@ -549,30 +571,30 @@ package GameElement::Player; {
   use FindBin qw( $Bin );
 
   use constant {
-    FALSE      => 0,
-    TRUE       => 1,
+    FALSE           => 0,
+    TRUE            => 1,
 
-    _MIN_SPEED     => 2,
-    _MAX_SPEED     => 8,
-    _ACCELERATION  => 0.6,
-    _RESISTANCE    => 0.1,
-    SHOT_COOLDOWN  => 6
+    _IMAGE_NAME => "spaceship.png",
+    _MIN_SPEED      => 1.5,
+    _MAX_SPEED      => 8,
+    _ACCELERATION   => 0.6,
+    _RESISTANCE     => 0.1,
+    _SHOT_COOLDOWN   => 6,
+    _MOVE_STOP_TIME => 3
   };
 
   #creates a new player
   sub new {
-    my ($class, $position, $size, $color, $mainLogic, $fieldSize) = @_;
-
-    my $image = ImageManipulation::CreateImage(File::Spec->catfile($Bin, 'spaceship.png'), $size->{Width}, $size->{Height});
+    my ($class, $position, $size, $mainLogic, $fieldSize) = @_;
+    my $image = ImageManipulation::CreateImage(File::Spec->catfile($Bin,_IMAGE_NAME), $size->{Width}, $size->{Height});
     my $id = UI::CreateCanvasElement($image, $position);
 
     return bless {
       Position         => $position,
       Size             => $size,
-      Color            => $color,
       _logic           => $mainLogic,
       FieldSize        => $fieldSize,
-      Direction        => Point->Empty(), #the direc tion in which the ship is flying
+      Direction        => Point->Empty(), #the direction in which the ship is flying
       DirectionLooking => Point->Empty(), #the direction in which the ship is looking
       IsMoving         => FALSE,
       Speed            => 0,
@@ -594,7 +616,7 @@ package GameElement::Player; {
   sub StopMoving {
     my ($this) = @_;
     $this->{IsMoving} = FALSE;
-    $this->{MoveStopTime} = 3; #todo: remove magic number
+    $this->{MoveStopTime} = _MOVE_STOP_TIME;
   }
 
   #updates the players direction, position and shots
@@ -602,9 +624,7 @@ package GameElement::Player; {
     my ($this, $cursorPos) = @_;
 
     $this->_ChangeDirection($cursorPos);
-
     $this->Move();
-
     $this->_Shoot();
   }
 
@@ -651,7 +671,7 @@ package GameElement::Player; {
   sub _ChangeDirection {
     my ($this, $cursorPos) = @_;
     my $playerPos = $this->{Position};
-    my $vector = $cursorPos->Substract($playerPos); #todo: implement in direction property
+    my $vector = $cursorPos->Substract($playerPos);
     my $x = $vector->{X};
     my $y = $vector->{Y};
     my $length = sqrt(($x * $x) + ($y * $y));
@@ -673,7 +693,7 @@ package GameElement::Player; {
   sub StopShooting {
     my ($this) = @_;
     $this->{IsShooting} = FALSE;
-    $this->{ShootCounter} =SHOT_COOLDOWN;
+    $this->{ShootCounter} =_SHOT_COOLDOWN;
   }
 
   #shoots when possible
@@ -684,7 +704,7 @@ package GameElement::Player; {
     #only shoot every X time
     my $counter = $this->{ShootCounter};
 
-    if ($counter < SHOT_COOLDOWN) {
+    if ($counter < _SHOT_COOLDOWN) {
       $this->{ShootCounter} = $counter + 1;
       return;
     }
@@ -721,11 +741,15 @@ package GameElement::Bullet; {
 
 package GameElement::Asteroid; {
   use parent -norequire, 'GameElement';
+  use Math::Trig;
+  use Switch;
   use FindBin qw( $Bin );
+
 
   use constant {
     FALSE  => 0,
     TRUE   => 1,
+    _IMAGE_NAME => "asteroid1.png",
 
     #asteroid sizes
     Small  => 30,
@@ -738,12 +762,13 @@ package GameElement::Asteroid; {
     Fast   => 7
   };
 
+
   my $imageSmall;
   my $imageMedium;
   my $imageLarge;
 
   sub Initialize {
-    my $spritePath = File::Spec->catfile($Bin, 'asteroid1.png');
+    my $spritePath = File::Spec->catfile($Bin, _IMAGE_NAME);
     $imageSmall = ImageManipulation::CreateImage($spritePath, Small, Small);
     $imageMedium = ImageManipulation::CreateImage($spritePath, Medium, Medium);
     $imageLarge = ImageManipulation::CreateImage($spritePath, Large, Large);
@@ -894,6 +919,7 @@ package ImageManipulation; {
   use Tk;
   use Tk::PNG;
   use FindBin qw( $Bin );
+  use Math::Trig;
   my $mw;
 
   #needed for accessing photo method
